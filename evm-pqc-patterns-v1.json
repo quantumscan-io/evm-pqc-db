@@ -1,0 +1,506 @@
+{
+  "$schema": "https://quantumscan.io/schemas/evm-pqc-db-v1.json",
+  "version": "1.0.0",
+  "description": "Public database of quantum-vulnerable cryptographic patterns in EVM smart contracts. CVE-equivalent for post-quantum risk in Solidity/EVM. Maintained by QuantumScan (quantumscan.io).",
+  "maintainer": "QuantumScan <security@quantumscan.io>",
+  "license": "CC0-1.0",
+  "created": "2026-06-29",
+  "patterns": [
+
+    {
+      "id": "EVM-PQC-001",
+      "name": "ecrecover — secp256k1 ECDSA signature verification",
+      "severity": "HIGH",
+      "category": "SIGNATURE",
+      "eip_references": ["EIP-155", "Yellow Paper §F"],
+      "affected_opcode": "CALL to precompile 0x01",
+      "solidity_patterns": [
+        "ecrecover(hash, v, r, s)",
+        "ECDSA.recover(hash, signature)",
+        "ECDSA.tryRecover(hash, signature)"
+      ],
+      "description": "ecrecover is the EVM precompile (address 0x01) that implements secp256k1 ECDSA signature recovery. All Ethereum account ownership verification uses this primitive. A cryptographically-relevant quantum computer running Shor's algorithm can recover the private key from a public key in polynomial time, breaking all ecrecover-based authorization.",
+      "quantum_attack": "SHOR",
+      "q_day_risk": "CRITICAL",
+      "hndl_risk": false,
+      "affected_protocols": [
+        "All EOA-controlled wallets",
+        "Gnosis Safe / Safe{Wallet}",
+        "OpenZeppelin Ownable",
+        "ERC-20 transfer authorization",
+        "Any contract using msg.sender from EOA"
+      ],
+      "migration_target": "ML-DSA-65 (NIST FIPS 204) via future EVM precompile. Interim: account abstraction (ERC-4337) with PQC validator contract.",
+      "migration_effort": "L",
+      "references": [
+        "NIST FIPS 204 (2024) — ML-DSA standard",
+        "EIP-7789 (draft) — On-Chain CBOM",
+        "Ethereum Foundation PQC Roadmap 2025"
+      ]
+    },
+
+    {
+      "id": "EVM-PQC-002",
+      "name": "EIP-712 typed data signatures — secp256k1 domain-separated ECDSA",
+      "severity": "HIGH",
+      "category": "SIGNATURE",
+      "eip_references": ["EIP-712"],
+      "affected_opcode": "CALL to precompile 0x01 (via ecrecover)",
+      "solidity_patterns": [
+        "_hashTypedDataV4(structHash)",
+        "EIP712._buildDomainSeparator()",
+        "DOMAIN_SEPARATOR",
+        "eip712Domain()"
+      ],
+      "description": "EIP-712 adds a domain separator to prevent cross-contract/cross-chain replay attacks, but the underlying signature scheme is still secp256k1 ECDSA. All EIP-712-signed messages (permit, delegation, votes, auction bids) are quantum-vulnerable.",
+      "quantum_attack": "SHOR",
+      "q_day_risk": "HIGH",
+      "hndl_risk": true,
+      "hndl_note": "Messages signed off-chain and relayed can be harvested today and the signing key recovered post-Q-Day.",
+      "affected_protocols": [
+        "ERC-2612 permit()",
+        "Compound / Aave delegation",
+        "OpenSea Seaport orders",
+        "CoW Protocol order signing",
+        "1inch fusion+ orders"
+      ],
+      "migration_target": "ML-DSA-65 (NIST FIPS 204). Requires new EIP-712-equivalent standard with ML-DSA domain encoding.",
+      "migration_effort": "M",
+      "references": [
+        "EIP-712 — Typed structured data hashing and signing",
+        "NIST FIPS 204 (2024)"
+      ]
+    },
+
+    {
+      "id": "EVM-PQC-003",
+      "name": "ERC-2612 permit() — gasless approval via ECDSA",
+      "severity": "HIGH",
+      "category": "SIGNATURE",
+      "eip_references": ["EIP-2612"],
+      "affected_opcode": "CALL to precompile 0x01 (via ecrecover inside permit())",
+      "solidity_patterns": [
+        "ERC20Permit",
+        "IERC20Permit",
+        "ERC2612",
+        "function permit(address owner, address spender",
+        "DAI_DOMAIN_SEPARATOR"
+      ],
+      "description": "ERC-2612 enables gasless ERC-20 approvals through off-chain ECDSA signatures. The permit() function calls ecrecover internally. Because the signature is created off-chain, it is particularly exposed to HNDL: an adversary can harvest the signed permit message today and, after Q-Day, forge the owner's signature to drain allowances.",
+      "quantum_attack": "SHOR",
+      "q_day_risk": "HIGH",
+      "hndl_risk": true,
+      "hndl_note": "Signed permit messages broadcast on-chain are permanently visible. Key recovery post-Q-Day enables replay/drain.",
+      "affected_protocols": [
+        "USDC (circle)", "DAI", "WETH9 (some versions)",
+        "Uniswap Permit2", "Aave aTokens", "Compound cTokens"
+      ],
+      "migration_target": "No PQC permit standard exists yet. Options: (1) return to on-chain approve() + multicall, (2) ERC-4337 PQC validator, (3) wait for EIP-7789 + ML-DSA permit standard.",
+      "migration_effort": "L",
+      "references": [
+        "EIP-2612 — Permit Extension for EIP-20 Signed Approvals",
+        "NIST FIPS 204 (2024)"
+      ]
+    },
+
+    {
+      "id": "EVM-PQC-004",
+      "name": "Gnosis Safe / Safe{Wallet} N-of-M ECDSA multisig",
+      "severity": "HIGH",
+      "category": "SIGNATURE",
+      "eip_references": ["EIP-1271"],
+      "affected_opcode": "CALL to precompile 0x01 (via checkNSignatures)",
+      "solidity_patterns": [
+        "GnosisSafe",
+        "checkNSignatures(bytes32 dataHash",
+        "execTransaction(",
+        "isValidSignature(",
+        "signatureToAddress(",
+        "_checkSignatures(",
+        "SafeSignature",
+        "ISafe"
+      ],
+      "description": "Gnosis Safe verifies N-of-M ECDSA signatures from owner accounts. Each owner key is a secp256k1 key pair. Even a 5-of-7 Safe is quantum-vulnerable: a quantum computer recovers any single signer's private key, trivially defeats the M-of-N threshold if M=1 owners are sufficient, and forces the entire multisig to be replaced.",
+      "quantum_attack": "SHOR",
+      "q_day_risk": "CRITICAL",
+      "hndl_risk": false,
+      "affected_protocols": [
+        "Gnosis Safe / Safe{Wallet}",
+        "All DAOs using Safe treasury",
+        "Compound Governor Bravo (Safe-based)",
+        "Multi-sig protocol owners"
+      ],
+      "migration_target": "Safe{Wallet} PQC module (in development). Each signer migrates to ML-DSA-65 key pair. ERC-4337 Safe module enables quantum-safe validation.",
+      "migration_effort": "L",
+      "references": [
+        "EIP-1271 — Standard Signature Validation Method for Contracts",
+        "Safe{Wallet} GitHub — safe-core-protocol",
+        "NIST FIPS 204 (2024)"
+      ]
+    },
+
+    {
+      "id": "EVM-PQC-005",
+      "name": "Chainlink Oracle ECDSA DON — secp256k1 threshold signatures",
+      "severity": "HIGH",
+      "category": "SIGNATURE",
+      "eip_references": [],
+      "affected_opcode": "Off-chain signing + on-chain AggregatorV3 consumption",
+      "solidity_patterns": [
+        "AggregatorV3Interface",
+        "latestRoundData()",
+        "ChainlinkClient",
+        "buildChainlinkRequest(",
+        "VRFConsumerBase",
+        "VRFConsumerBaseV2",
+        "requestRandomness("
+      ],
+      "description": "Chainlink's Decentralized Oracle Network (DON) uses threshold ECDSA (secp256k1) for off-chain report signing. While the on-chain contract doesn't call ecrecover directly, the data it consumes is authenticated by quantum-vulnerable ECDSA. A quantum attacker could forge oracle price reports by recovering DON node keys — causing DeFi protocols relying on Chainlink to use malicious prices.",
+      "quantum_attack": "SHOR",
+      "q_day_risk": "HIGH",
+      "hndl_risk": true,
+      "hndl_note": "DON nodes send signed reports via long-lived TLS sessions. HNDL attack on those sessions could expose signing keys before Q-Day.",
+      "affected_protocols": [
+        "All Chainlink price feeds consumers (Aave, Compound, GMX, Synthetix)",
+        "Chainlink VRF users",
+        "Chainlink CCIP cross-chain"
+      ],
+      "migration_target": "Monitor Chainlink PQC roadmap. Chainlink hasn't published a timeline. Interim: use multi-oracle aggregation (Chainlink + Pyth + Chronicle) to reduce single-oracle failure risk.",
+      "migration_effort": "L",
+      "references": [
+        "Chainlink Whitepaper v2 — OCR protocol",
+        "NIST FIPS 204 (2024)",
+        "EVM-PQC-010 (HNDL Relayer Risk)"
+      ]
+    },
+
+    {
+      "id": "EVM-PQC-006",
+      "name": "ERC-4337 UserOperation ECDSA validation",
+      "severity": "HIGH",
+      "category": "SIGNATURE",
+      "eip_references": ["EIP-4337"],
+      "affected_opcode": "CALL to precompile 0x01 (via validateUserOp)",
+      "solidity_patterns": [
+        "validateUserOp(",
+        "IAccount.validateUserOp",
+        "UserOperation.",
+        "_validateSignature(UserOperation",
+        "ecrecover(*userOp",
+        "ECDSA.recover(*userOp"
+      ],
+      "description": "ERC-4337 Account Abstraction introduces a flexible signature validation hook (validateUserOp). Most current implementations use ECDSA/secp256k1 — the default SimpleAccount uses ecrecover. This means AA wallets are quantum-vulnerable at the validation layer unless a custom PQC validator is deployed.",
+      "quantum_attack": "SHOR",
+      "q_day_risk": "HIGH",
+      "hndl_risk": false,
+      "affected_protocols": [
+        "SimpleAccount (reference impl)",
+        "Biconomy Smart Accounts",
+        "ZeroDev Kernel",
+        "Soul Wallet",
+        "Alchemy Light Account"
+      ],
+      "migration_target": "ERC-4337 is the MIGRATION PATH for PQC: replace ECDSA validator with ML-DSA validator contract. This is the recommended upgrade route for all EOAs post-Q-Day.",
+      "migration_effort": "M",
+      "references": [
+        "EIP-4337 — Account Abstraction Using Alt Mempool",
+        "Vitalik Buterin — ERC-4337 as PQC migration path (2024)",
+        "NIST FIPS 204 (2024)"
+      ]
+    },
+
+    {
+      "id": "EVM-PQC-007",
+      "name": "Uniswap Permit2 / position signature — ECDSA batch approval",
+      "severity": "HIGH",
+      "category": "SIGNATURE",
+      "eip_references": ["EIP-712"],
+      "affected_opcode": "CALL to precompile 0x01",
+      "solidity_patterns": [
+        "IPermit2.permit",
+        "Permit2.permitTransferFrom",
+        "PermitTransferFrom",
+        "SignatureTransfer",
+        "AllowanceTransfer.permit",
+        "_verifyPermitSignature",
+        "EIP712('Permit2'",
+        "INonfungiblePositionManager.permit"
+      ],
+      "description": "Uniswap's Permit2 contract (0x000000000022D473030F116dDEE9F6B43aC78BA3) enables unified batch token approvals via EIP-712 ECDSA signatures. It is deployed on 30+ chains and used by Uniswap v3/v4, 1inch, Matcha, and dozens of aggregators. All Permit2 signatures are secp256k1 ECDSA — quantum-vulnerable.",
+      "quantum_attack": "SHOR",
+      "q_day_risk": "HIGH",
+      "hndl_risk": true,
+      "hndl_note": "Permit2 messages are broadcast publicly. Harvested today, key recovery post-Q-Day allows draining all approved tokens.",
+      "affected_protocols": [
+        "Uniswap v3 / v4",
+        "1inch Fusion+",
+        "Matcha / 0x",
+        "CoW Protocol",
+        "Any protocol integrating Permit2"
+      ],
+      "migration_target": "Requires Permit2 v2 with ML-DSA support. No timeline published by Uniswap Labs.",
+      "migration_effort": "L",
+      "references": [
+        "Permit2 — github.com/Uniswap/permit2",
+        "EIP-712",
+        "NIST FIPS 204 (2024)"
+      ]
+    },
+
+    {
+      "id": "EVM-PQC-008",
+      "name": "ZK-ECDSA circuits — ECDSA verification inside Groth16/PLONK proofs",
+      "severity": "HIGH",
+      "category": "ZK_PROOF",
+      "eip_references": [],
+      "affected_opcode": "STATICCALL to pairing precompiles (0x08)",
+      "solidity_patterns": [
+        "ECDSAVerify(",
+        "Secp256k1(",
+        "ecdsa_verify_circuit",
+        "groth16.*ecdsa",
+        "plonk.*ecdsa",
+        "ecdsaCircuit",
+        "verifyECDSAProof"
+      ],
+      "description": "Several ZK protocols prove ECDSA signature knowledge inside a ZK circuit (e.g., zkEmail, Noir ECDSA, circom-ecdsa). The ZK proof itself doesn't reveal the private key, but the underlying signature scheme is secp256k1 ECDSA. Post-Q-Day, the signer's key can be recovered from any historically-published signature, making the 'secret' in the ZK proof retroactively exposed.",
+      "quantum_attack": "SHOR",
+      "q_day_risk": "HIGH",
+      "hndl_risk": true,
+      "hndl_note": "The original ECDSA signature that the ZK proof attests to must have been broadcast somewhere. HNDL captures that original signature.",
+      "affected_protocols": [
+        "zkEmail",
+        "Noir ECDSA (Aztec)",
+        "circom-ecdsa (0xPARC)",
+        "ZK attestation protocols using secp256k1"
+      ],
+      "migration_target": "ZK circuits proving ML-DSA knowledge (lattice-based). Research prototype: STARK-based ML-DSA circuits exist. No production deployment yet.",
+      "migration_effort": "L",
+      "references": [
+        "0xPARC circom-ecdsa library",
+        "NIST FIPS 204 (2024)",
+        "STARK-based PQC ZK circuits (academic 2025)"
+      ]
+    },
+
+    {
+      "id": "EVM-PQC-009",
+      "name": "ERC-1271 isValidSignature — contract-based ECDSA delegation",
+      "severity": "HIGH",
+      "category": "SIGNATURE",
+      "eip_references": ["EIP-1271"],
+      "affected_opcode": "CALL to precompile 0x01 (via delegated ecrecover)",
+      "solidity_patterns": [
+        "function isValidSignature(bytes32",
+        "IERC1271.isValidSignature",
+        "ERC1271.isValidSignature",
+        "SignatureChecker.isValidSignatureNow",
+        "_isValidSignature(",
+        "0x1626ba7e"
+      ],
+      "description": "ERC-1271 allows contracts to validate signatures on behalf of smart accounts and DAOs. While the interface is algorithm-agnostic, virtually all current implementations delegate to ECDSA/ecrecover. This is also the interface used by Safe{Wallet} and Gnosis Safe.",
+      "quantum_attack": "SHOR",
+      "q_day_risk": "HIGH",
+      "hndl_risk": false,
+      "affected_protocols": [
+        "Safe{Wallet}",
+        "ERC-4337 smart accounts",
+        "CoW Protocol order validation",
+        "1inch limit orders"
+      ],
+      "migration_target": "ERC-1271 is algorithm-agnostic. Upgrade the implementation to use ML-DSA-65 internally. No change to the interface required.",
+      "migration_effort": "M",
+      "references": [
+        "EIP-1271 — Standard Signature Validation Method for Contracts",
+        "NIST FIPS 204 (2024)"
+      ]
+    },
+
+    {
+      "id": "EVM-PQC-010",
+      "name": "Bridge / Sequencer / Relayer ECDSA — HNDL exposure via long-lived TLS sessions",
+      "severity": "CRITICAL",
+      "category": "SIGNATURE",
+      "eip_references": [],
+      "affected_opcode": "Off-chain signing (relayed on-chain)",
+      "solidity_patterns": [],
+      "description": "Bridge relayers, L2 sequencers, and oracle relay nodes sign messages off-chain using secp256k1 ECDSA before submitting them on-chain. These nodes maintain long-lived TLS sessions (hours/days) with peer nodes. Harvest Now, Decrypt Later (HNDL) attacks target these sessions: a quantum adversary captures the TLS-encrypted traffic today and, after Q-Day, decrypts it to extract signing keys or the messages themselves. This enables retroactive forgery of bridge attestations.",
+      "quantum_attack": "HNDL",
+      "q_day_risk": "HIGH",
+      "hndl_risk": true,
+      "hndl_note": "HNDL is the most imminent quantum threat to bridges — it doesn't require a full cryptographically-relevant quantum computer. Even partial decryption of TLS sessions may leak nonces or key material.",
+      "affected_protocols": [
+        "Arbitrum bridge (sequencer signing)",
+        "Optimism bridge (batcher signing)",
+        "Polygon PoS checkpoints (validator ECDSA)",
+        "Wormhole guardians (threshold ECDSA)",
+        "LayerZero DVN relayers",
+        "Chainlink OCR nodes",
+        "All cross-chain message relayers"
+      ],
+      "quantumscan_endpoint": "POST /api/scan/relayer — HNDL Risk Score 0–100 for relayer endpoints",
+      "migration_target": "Hybrid PQC TLS: X25519Kyber768 (NIST FIPS 203 ML-KEM hybrid KEX) for transport. Signing: ML-DSA-65 for on-chain-submitted messages. TLS 1.3 minimum with PQC cipher suite.",
+      "migration_effort": "M",
+      "references": [
+        "NIST SP 800-227 (draft) — Guidelines for PQC Migration",
+        "ETSI GR QSC 006 — HNDL threat model",
+        "NSA CNSA 2.0 — deadline 2030 for critical infrastructure",
+        "NIST FIPS 203 (2024) — ML-KEM (Kyber)"
+      ]
+    },
+
+    {
+      "id": "EVM-PQC-011",
+      "name": "BLS12-381 pairing curve — Ethereum PoS validator signatures",
+      "severity": "HIGH",
+      "category": "SIGNATURE",
+      "eip_references": ["EIP-2537"],
+      "affected_opcode": "STATICCALL to BLS12-381 precompiles (0x0B–0x12, EIP-2537)",
+      "solidity_patterns": [
+        "bls12-381",
+        "G1Affine",
+        "G2Affine",
+        "bls.sign(",
+        "bls.verify(",
+        "bls.aggregateVerify(",
+        "pairing(&G1",
+        "from_compressed()"
+      ],
+      "description": "Ethereum PoS uses BLS12-381 for validator signatures. BLS pairing curves are believed to be quantum-vulnerable (Shor's algorithm attacks discrete log on the base field), though no efficient full attack exists yet. EIP-2537 exposes BLS12-381 precompiles to smart contracts. Contracts using these precompiles for verification inherit the underlying quantum risk.",
+      "quantum_attack": "SHOR (DLP on elliptic curve group)",
+      "q_day_risk": "HIGH",
+      "hndl_risk": false,
+      "affected_protocols": [
+        "Ethereum PoS validator set",
+        "SSZ beacon chain state",
+        "Ethereum attestation aggregation",
+        "zkBLS bridge proofs"
+      ],
+      "migration_target": "No NIST PQC standard for pairings yet. Ethereum Foundation PQC roadmap includes EIP-7549 (aggregate attestation format). Monitor IETF PQUIP group.",
+      "migration_effort": "L",
+      "references": [
+        "EIP-2537 — Precompile for BLS12-381 curve operations",
+        "Ethereum Foundation PQC Research — github.com/ethereum/research/tree/master/pqc"
+      ]
+    },
+
+    {
+      "id": "EVM-PQC-012",
+      "name": "LayerZero / Wormhole cross-chain ECDSA signature relay",
+      "severity": "HIGH",
+      "category": "SIGNATURE",
+      "eip_references": [],
+      "affected_opcode": "CALL to precompile 0x01 (via ecrecover in verifyVAA)",
+      "solidity_patterns": [
+        "ILayerZeroEndpoint.send",
+        "lzReceive(*signatures",
+        "Wormhole.parseAndVerifyVM",
+        "verifyVAA(",
+        "GuardianSet.*signatures",
+        "parseVM(*signatures"
+      ],
+      "description": "LayerZero DVN relayers and Wormhole guardians authenticate cross-chain messages with ECDSA threshold signatures. Compromising a single guardian key (or enough for threshold) via quantum key recovery allows an adversary to forge arbitrary cross-chain messages — enabling unauthorized token bridge withdrawals.",
+      "quantum_attack": "SHOR",
+      "q_day_risk": "CRITICAL",
+      "hndl_risk": true,
+      "hndl_note": "Guardian nodes use TLS-encrypted P2P channels. HNDL on those channels could leak signing keys before Q-Day.",
+      "affected_protocols": [
+        "Wormhole (19 guardians, 13/19 threshold)",
+        "LayerZero DVN network",
+        "All protocols bridging via these networks (e.g., USDC CCTP, Pyth)"
+      ],
+      "migration_target": "ML-DSA-65 threshold signature scheme for guardian/DVN signing. Requires protocol upgrade.",
+      "migration_effort": "L",
+      "references": [
+        "Wormhole whitepaper v2",
+        "LayerZero DVN specification",
+        "NIST FIPS 204 (2024)"
+      ]
+    },
+
+    {
+      "id": "EVM-PQC-013",
+      "name": "assembly-level ecrecover precompile call (0x01)",
+      "severity": "HIGH",
+      "category": "SIGNATURE",
+      "eip_references": [],
+      "affected_opcode": "CALL/STATICCALL to address 0x01",
+      "solidity_patterns": [
+        "staticcall(*,1,",
+        "signer := mload(",
+        "recovered := mload(",
+        "let signer := ecrecover"
+      ],
+      "description": "Some gas-optimized contracts call the ecrecover precompile directly via inline assembly to avoid Solidity's memory overhead. The quantum vulnerability is identical to the high-level ecrecover(), but the pattern is harder for static analyzers to detect.",
+      "quantum_attack": "SHOR",
+      "q_day_risk": "HIGH",
+      "hndl_risk": false,
+      "affected_protocols": [
+        "Gas-optimized DEX contracts",
+        "Optimized multisig implementations",
+        "MEV bots with inline assembly"
+      ],
+      "migration_target": "Same as EVM-PQC-001. Assembly-level call does not change the underlying cryptographic vulnerability.",
+      "migration_effort": "L",
+      "references": [
+        "Ethereum Yellow Paper §F — precompiled contracts",
+        "EVM-PQC-001 (parent pattern)"
+      ]
+    },
+
+    {
+      "id": "EVM-PQC-014",
+      "name": "ecrecover with raw abi.encodePacked — signature replay vulnerability",
+      "severity": "CRITICAL",
+      "category": "SIGNATURE",
+      "eip_references": ["EIP-712"],
+      "affected_opcode": "CALL to precompile 0x01",
+      "solidity_patterns": [
+        "ecrecover(keccak256(abi.encodePacked("
+      ],
+      "description": "Using ecrecover with abi.encodePacked (without a proper EIP-712 domain separator) creates both a quantum vulnerability AND a same-chain/cross-chain signature replay attack vector. This is a double vulnerability: the secp256k1 signature is Shor-vulnerable, and the lack of domain separator allows replay across contracts and chains. This pattern is the most dangerous combination in the database.",
+      "quantum_attack": "SHOR + REPLAY",
+      "q_day_risk": "CRITICAL",
+      "hndl_risk": true,
+      "affected_protocols": [
+        "Legacy token contracts (pre-EIP-712)",
+        "Airdrop claim contracts",
+        "Many yield farming contracts (2020-2021 vintage)"
+      ],
+      "migration_target": "Immediate: add EIP-712 domain separator. Long-term: ML-DSA-65 (NIST FIPS 204).",
+      "migration_effort": "M",
+      "references": [
+        "EIP-712 — Typed structured data hashing",
+        "SWC-117 — Signature Replay Attacks",
+        "NIST FIPS 204 (2024)"
+      ]
+    }
+  ],
+
+  "statistics": {
+    "total_patterns": 14,
+    "by_severity": {
+      "CRITICAL": 3,
+      "HIGH": 11,
+      "MEDIUM": 0,
+      "LOW": 0
+    },
+    "by_quantum_attack": {
+      "SHOR": 12,
+      "HNDL": 1,
+      "SHOR_PLUS_REPLAY": 1
+    },
+    "hndl_exposed_patterns": 8,
+    "patterns_with_no_current_migration_standard": 6
+  },
+
+  "glossary": {
+    "SHOR": "Shor's algorithm breaks integer factorization (RSA) and discrete logarithm (ECDSA/DH) in polynomial time on a cryptographically-relevant quantum computer (CRQC).",
+    "GROVER": "Grover's algorithm provides quadratic speedup for brute-force search, halving symmetric key security (AES-128 → 64-bit effective).",
+    "HNDL": "Harvest Now, Decrypt Later — adversary captures encrypted traffic today and stores it for decryption after a CRQC is available.",
+    "CRQC": "Cryptographically Relevant Quantum Computer — a fault-tolerant quantum computer with enough logical qubits to run Shor's algorithm against production key sizes.",
+    "ML-DSA": "Module Lattice Digital Signature Algorithm — NIST FIPS 204 (2024). Quantum-safe replacement for ECDSA/RSA signatures.",
+    "ML-KEM": "Module Lattice Key Encapsulation Mechanism — NIST FIPS 203 (2024). Quantum-safe replacement for ECDH/RSA key exchange.",
+    "SLH-DSA": "Stateless Hash-based Digital Signature Algorithm — NIST FIPS 205 (2024). Hash-based quantum-safe signature (conservative choice)."
+  }
+}
